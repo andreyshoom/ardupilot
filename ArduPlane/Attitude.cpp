@@ -121,41 +121,394 @@ void Plane::stabilize_roll()
     }
 
     const float roll_out = stabilize_roll_get_roll_out();
+//    gcs().send_text(MAV_SEVERITY_INFO, "roll_out: %.2f", roll_out);
     SRV_Channels::set_output_scaled(SRV_Channel::k_aileron, roll_out);
+
+
+//    const float roll_out = stabilize_roll_get_roll_out();
+//	const float pitch_out = stabilize_pitch_get_pitch_out();
+//
+//	// Микширование для элевонов
+//	const float elevon_left = pitch_out + roll_out;
+//	const float elevon_right = pitch_out - roll_out;
+//
+//	// Отправляем сигнал на элевоны
+//	SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_left, elevon_left);
+//	SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_right, elevon_right);
+
+}
+
+float Plane::AngleReduction0_360_andr(float angle_andr)
+{
+    if (angle_andr < 0)
+        return angle_andr = angle_andr + 360;
+    else if (angle_andr >= 360)
+        return angle_andr = angle_andr - 360;
+    else
+        return angle_andr;
+ }
+
+float Plane::AngleErrTo180(float angle)
+{
+    if (angle < -180)
+        return angle = angle + 360;
+    else if (angle >= 180)
+        return angle = angle - 360;
+    else
+        return angle;
+ }
+
+float Plane::CourseToPointShortDis(float lat1_andr, float lon1_andr, float lat2_andr, float lon2_andr)
+{
+//    float bb, l, Bm, eta, Nm, Mm, Q, P, aa, Am;
+//    bb = deg2rad_andr(lat2_andr) - deg2rad_andr(lat1_andr);
+//    l = deg2rad_andr(lon2_andr) - deg2rad_andr(lon1_andr);
+//    Bm = (deg2rad_andr(lat1_andr) + deg2rad_andr(lat2_andr)) / 2;
+//    eta = 0.0067385254 * powf(cosf(Bm), 2);
+//    Nm = 6399698.9018 / sqrtf(1 + eta);
+//    Mm = Nm / (1 + eta);
+//    Q = bb * Mm * (1 - ((2 * powf(l, 2) + powf(l, 2) * powf(sinf(Mm), 2)) / 24));
+//    P = l * Nm * cosf(Bm) * (1 + ((powf(bb, 2) - powf(l, 2) * powf(sinf(Bm), 2)) / 24));
+//    aa = l * sinf(Bm) * (1 + ((3 * powf(bb, 2) + 2 * powf(l, 2) - 2 * powf(l, 2) * powf(sinf(Bm), 2)) / 24));
+//    Am = atan2f(P, Q);
+//
+//    return AngleReduction0_360_andr(180 / 3.14159265 * (Am - aa / 2));
+	if (lat1_andr < -90 || lat1_andr > 90 || lat2_andr < -90 || lat2_andr > 90 ||
+	        lon1_andr < -180 || lon1_andr > 180 || lon2_andr < -180 || lon2_andr > 180) {
+	        gcs().send_text(MAV_SEVERITY_WARNING, "Invalid latitude or longitude values");
+	        return 0.0f;
+	    }
+
+	    float bb, l, Bm, eta, Nm, Mm, Q, P, aa, Am;
+	    bb = deg2rad_andr(lat2_andr) - deg2rad_andr(lat1_andr);
+	    l = deg2rad_andr(lon2_andr) - deg2rad_andr(lon1_andr);
+	    Bm = (deg2rad_andr(lat1_andr) + deg2rad_andr(lat2_andr)) / 2;
+
+	    if (fabs(cosf(Bm)) < 1e-6) {
+	        gcs().send_text(MAV_SEVERITY_WARNING, "Bm is too close to a pole, cos(Bm) is zero");
+	        return 0.0f;
+	    }
+
+	    eta = 0.0067385254 * powf(cosf(Bm), 2);
+
+	    if (1 + eta <= 0) {
+	        gcs().send_text(MAV_SEVERITY_WARNING, "Invalid value for eta, avoiding division by zero");
+	        return 0.0f;
+	    }
+
+	    Nm = 6399698.9018 / sqrtf(1 + eta);
+	    Mm = Nm / (1 + eta);
+	    Q = bb * Mm * (1 - ((2 * powf(l, 2) + powf(l, 2) * powf(sinf(Mm), 2)) / 24));
+	    P = l * Nm * cosf(Bm) * (1 + ((powf(bb, 2) - powf(l, 2) * powf(sinf(Bm), 2)) / 24));
+
+	    if (fabs(P) < 1e-6 && fabs(Q) < 1e-6) {
+	        gcs().send_text(MAV_SEVERITY_WARNING, "P and Q are zero, atan2 undefined");
+	        return 0.0f;
+	    }
+
+	    aa = l * sinf(Bm) * (1 + ((3 * powf(bb, 2) + 2 * powf(l, 2) - 2 * powf(l, 2) * powf(sinf(Bm), 2)) / 24));
+	    Am = atan2f(P, Q);
+
+	    return AngleReduction0_360_andr(180 / 3.14159265 * (Am - aa / 2));
+
 }
 
 float Plane::stabilize_roll_get_roll_out()
 {
-    const float speed_scaler = get_speed_scaler();
-#if HAL_QUADPLANE_ENABLED
-    if (!quadplane.use_fw_attitude_controllers()) {
-        // use the VTOL rate for control, to ensure consistency
-        const auto &pid_info = quadplane.attitude_control->get_rate_roll_pid().get_pid_info();
+//    const float speed_scaler = get_speed_scaler();
+//    uint16_t total_cmds = plane.mission.num_commands();
+//    gcs().send_text(MAV_SEVERITY_INFO, "total_cmds=%u", total_cmds);
+//
+//    if (total_cmds >= 2) {
+//        // Проверяем, что GPS фиксирует позицию
+//        if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
+//            // Получаем текущие координаты GPS
+//            latitude = gps.location().lat * 1.0e-7;   // Широта в градусах
+//            longitude = gps.location().lng * 1.0e-7;  // Долгота в градусах
+//
+//            // Получаем координаты предпоследней точки
+//            AP_Mission::Mission_Command penultimate_cmd;
+//            bool success = plane.mission.read_cmd_from_storage(total_cmds - 2, penultimate_cmd);
+//            uint16_t penultimate_index = total_cmds - 2; // Индекс предпоследней точки
+//            latitude_penultimate_wp = penultimate_cmd.content.location.lat * 1.0e-7;
+//            longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
+//            dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+//
+//            if (success && (plane.mission.get_prev_nav_cmd_wp_index() == penultimate_index || dist_to_penultimate_wp < 20.0f)) {
+//                dive_mode_enabled = true;
+//                gcs().send_text(MAV_SEVERITY_INFO, "Dive mode enabled");
+//            }
+//
+//            // Логика пикирования
+//            if (dive_mode_enabled) {
+//            	rollController.reset_I();
+//                AP_Mission::Mission_Command last_cmd;
+//                success = false;
+//
+//                // Читаем последнюю точку, если она есть
+//                if (total_cmds >= 1) {
+//                    success = plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd);
+//                    if (success) {
+//                        // Сохраняем координаты последней точки
+//                        saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
+//                        saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
+//                        last_wp_saved = true;
+////                        plane.rollController.reset_I();
+//                    }
+//                }
+//
+//			}
+//        }
+//    } else {
+//        gcs().send_text(MAV_SEVERITY_INFO, "Not enough waypoints for dive mode");
+//    }
+//
+//
+//    // Используем сохраненные координаты последней точки, если текущую не удалось считать
+//	if (last_wp_saved) {
+//		float target_lat = saved_latitude_last_wp;
+//		float target_lon = saved_longitude_last_wp;
+//		Location flex_next_WP_loc = next_WP_loc;
+//		float bearing_deg = degrees(prev_WP_loc.Location::get_bearing(flex_next_WP_loc));
+//		// Рассчитываем курс на сохраненную точку
+//		course_to_target_point = CourseToPointShortDis(latitude, longitude, target_lat, target_lon);
+//		float target_bearing = nav_controller->target_bearing_cd() * 0.01;
+//		course_to_target_point = wrap_180(target_bearing - gps.ground_course());
+//		gcs().send_text(MAV_SEVERITY_INFO, "course_to_target_point: %.2f",  course_to_target_point);
+//		gcs().send_text(MAV_SEVERITY_INFO, "bearing_deg: %.2f",  bearing_deg);
+//		gcs().send_text(MAV_SEVERITY_INFO, "target_bearing: %.2f",  target_bearing);
+////		course_target_error_ = AngleErrTo180(course_to_target_point - ahrs.yaw_sensor*0.01f);
+//		gcs().send_text(MAV_SEVERITY_INFO, "course_target_error_: %.2f", course_target_error_);
+//		gcs().send_text(MAV_SEVERITY_INFO, "gps.ground_course(): %.2f",  gps.ground_course());
+//
+//		const float max_roll_angle = 50.0f;
+////		float d_gain = 0.5f; // Производная ошибка курса
+////		float gain = 3.0f;   // Увеличенный коэффициент усиления
+//
+////		float delta_course = course_to_target_point - last_course_to_target_point;
+////		last_course_to_target_point = course_to_target_point;
+//
+//		//float course_error_with_derivative = course_target_error_ * gain + d_gain * delta_course;
+//		course_target_error_ = constrain_float(course_to_target_point, -max_roll_angle, max_roll_angle);
+//		gcs().send_text(MAV_SEVERITY_INFO, "course_target_error_2: %.2f", course_target_error_);
+//		// Управляем сервоприводом
+//		gcs().send_text(MAV_SEVERITY_INFO, "OUT: %.2f", rollController.get_servo_out(course_target_error_ * 100.0f - ahrs.roll_sensor, speed_scaler, false,
+//				ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION))));
+//				// Управляем сервоприводом
+//		gcs().send_text(MAV_SEVERITY_INFO, "roll_sensor: %.2f",  (float)ahrs.roll_sensor*0.01f);
+//		return rollController.get_servo_out(course_target_error_ * 100.0f - ahrs.roll_sensor, speed_scaler, true,
+//											ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//	} else {
+//		gcs().send_text(MAV_SEVERITY_INFO, "No saved waypoint for dive mode");
+//#if HAL_QUADPLANE_ENABLED
+//    if (!quadplane.use_fw_attitude_controllers()) {
+//        // use the VTOL rate for control, to ensure consistency
+//        const auto &pid_info = quadplane.attitude_control->get_rate_roll_pid().get_pid_info();
+//
+//        // scale FF to angle P
+//        if (quadplane.option_is_set(QuadPlane::OPTION::SCALE_FF_ANGLE_P)) {
+//            const float mc_angR = quadplane.attitude_control->get_angle_roll_p().kP()
+//                * quadplane.attitude_control->get_last_angle_P_scale().x;
+//            if (is_positive(mc_angR)) {
+//                rollController.set_ff_scale(MIN(1.0, 1.0 / (mc_angR * rollController.tau())));
+//            }
+//        }
+//
+//        const float roll_out = rollController.get_rate_out(degrees(pid_info.target), speed_scaler);
+//        /* when slaving fixed wing control to VTOL control we need to decay the integrator to prevent
+//           opposing integrators balancing between the two controllers
+//        */
+//        rollController.decay_I();
+//        return roll_out;
+//    }
+//#endif
+//
+//    bool disable_integrator = false;
+//    if (control_mode == &mode_stabilize && channel_roll->get_control_in() != 0) {
+//        disable_integrator = true;
+//    }
+//    float target_bearing = nav_controller->target_bearing_cd() * 0.01;
+//    Location flex_next_WP_loc = next_WP_loc;
+//    float bearing_deg = degrees(prev_WP_loc.Location::get_bearing(flex_next_WP_loc));
+//    gcs().send_text(MAV_SEVERITY_INFO, "target_bearing: %.2f",  target_bearing);
+//    gcs().send_text(MAV_SEVERITY_INFO, "bearing_deg: %.2f",  bearing_deg);
+//    gcs().send_text(MAV_SEVERITY_INFO, "-----------------------");
+//    gcs().send_text(MAV_SEVERITY_INFO, "roll_sensor: %.2f",  (float)ahrs.roll_sensor*0.01f);
+//    gcs().send_text(MAV_SEVERITY_INFO, "nav_roll_cd: %.2f",  (float)nav_roll_cd*0.01f);
+//    gcs().send_text(MAV_SEVERITY_INFO, "OUT2: %.2f",  rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, disable_integrator,
+//            ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION))));
+//    return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, disable_integrator,
+//                                        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//	}
+//
+//
 
-        // scale FF to angle P
-        if (quadplane.option_is_set(QuadPlane::OPTION::SCALE_FF_ANGLE_P)) {
-            const float mc_angR = quadplane.attitude_control->get_angle_roll_p().kP()
-                * quadplane.attitude_control->get_last_angle_P_scale().x;
-            if (is_positive(mc_angR)) {
-                rollController.set_ff_scale(MIN(1.0, 1.0 / (mc_angR * rollController.tau())));
-            }
-        }
 
-        const float roll_out = rollController.get_rate_out(degrees(pid_info.target), speed_scaler);
-        /* when slaving fixed wing control to VTOL control we need to decay the integrator to prevent
-           opposing integrators balancing between the two controllers
-        */
-        rollController.decay_I();
-        return roll_out;
-    }
-#endif
 
-    bool disable_integrator = false;
-    if (control_mode == &mode_stabilize && channel_roll->get_control_in() != 0) {
-        disable_integrator = true;
-    }
-    return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, disable_integrator,
-                                        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//	const float speed_scaler = get_speed_scaler();
+//	uint16_t total_cmds = plane.mission.num_commands();
+//	gcs().send_text(MAV_SEVERITY_INFO, "total_cmds=%u", total_cmds);
+//
+//	if (total_cmds >= 2) {
+//		if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
+//			latitude = gps.location().lat * 1.0e-7;
+//			longitude = gps.location().lng * 1.0e-7;
+//
+//			// Получаем координаты предпоследней точки
+//			AP_Mission::Mission_Command penultimate_cmd;
+//			bool success = plane.mission.read_cmd_from_storage(total_cmds - 2, penultimate_cmd);
+//			latitude_penultimate_wp = penultimate_cmd.content.location.lat * 1.0e-7;
+//			longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
+//			dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+//
+//			if (success && (plane.mission.get_prev_nav_cmd_wp_index() == (total_cmds - 2) || dist_to_penultimate_wp < 20.0f)) {
+//				dive_mode_enabled = true;
+//				rollController.reset_I(); // Сброс интегратора
+//				yawController.reset_I();
+//				gcs().send_text(MAV_SEVERITY_INFO, "Dive mode enabled");
+//			}
+//
+//			// Получаем последнюю точку
+//			if (dive_mode_enabled) {
+//				rollController.reset_I();
+//				AP_Mission::Mission_Command last_cmd;
+//				if (plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd)) {
+//					saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
+//					saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
+//					last_wp_saved = true;
+//				}
+//			}
+//		}
+//	} else {
+//		gcs().send_text(MAV_SEVERITY_INFO, "Not enough waypoints for dive mode");
+//	}
+//
+//	if (last_wp_saved) {
+//		// Расчет курса на последнюю точку
+//		float target_lat = saved_latitude_last_wp;
+//		float target_lon = saved_longitude_last_wp;
+//
+//		course_to_target_point = CourseToPointShortDis(latitude, longitude, target_lat, target_lon);
+//		course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+//
+//		// Ограничение ошибки курса
+//		float max_course_error = 45.0f; // Максимальная ошибка курса
+//		float gain = 2.0f; // Умеренный коэффициент усиления
+//		course_target_error_ = constrain_float(course_to_target_point, -max_course_error, max_course_error) * gain;
+//
+//		gcs().send_text(MAV_SEVERITY_INFO, "course_target_error_: %.2f", course_target_error_);
+//
+//		// Управление сервоприводом с ограничением на изменение сигнала
+//		float roll_output = rollController.get_servo_out(course_target_error_ * 100.0f - ahrs.roll_sensor, speed_scaler, true,
+//			ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//
+//		// Ограничиваем изменение управляющего сигнала
+//		float max_roll_output_change = 500.0f;
+//		roll_output = constrain_float(roll_output - previous_roll_output, -max_roll_output_change, max_roll_output_change) + previous_roll_output;
+//		previous_roll_output = roll_output;
+//
+//		gcs().send_text(MAV_SEVERITY_INFO, "Roll output: %.2f", roll_output);
+//		return roll_output;
+//	} else {
+//		gcs().send_text(MAV_SEVERITY_INFO, "No saved waypoint for dive mode");
+//	}
+//
+//	return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, false,
+//		ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+
+
+	const float speed_scaler = get_speed_scaler();
+	uint16_t total_cmds = plane.mission.num_commands();
+	gcs().send_text(MAV_SEVERITY_INFO, "total_cmds=%u", total_cmds);
+
+	if (total_cmds >= 2) {
+	    if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
+	        latitude = gps.location().lat * 1.0e-7;
+	        longitude = gps.location().lng * 1.0e-7;
+
+	        // Получаем текущую точку миссии
+	        current_nav_index = plane.mission.get_current_nav_index();
+	        gcs().send_text(MAV_SEVERITY_INFO, "Current nav index: %u", current_nav_index);
+
+	        // Проверяем, летит ли самолет к предпоследней точке
+	        if (current_nav_index == (total_cmds - 2)) {
+	            // Самолет направляется к предпоследней точке
+	            AP_Mission::Mission_Command penultimate_cmd;
+	            if (plane.mission.read_cmd_from_storage(current_nav_index, penultimate_cmd)) {
+	                latitude_penultimate_wp = penultimate_cmd.content.location.lat * 1.0e-7;
+	                longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
+	                dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+
+	                // Проверяем расстояние до предпоследней точки
+	                if (dist_to_penultimate_wp <= 50.0f) {
+	                    gcs().send_text(MAV_SEVERITY_INFO, "Approaching penultimate waypoint, switching to final target");
+
+	                    // Получаем координаты последней точки
+	                    AP_Mission::Mission_Command last_cmd;
+	                    if (plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd)) {
+	                        saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
+	                        saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
+	                        last_wp_saved = true;
+
+	                        // Расчет курса на последнюю точку
+	                        course_to_target_point = CourseToPointShortDis(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
+	                        course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+	                    }
+	                } else {
+	                    // Если еще не приближаемся к предпоследней точке, курс на нее
+	                    course_to_target_point = CourseToPointShortDis(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+	                    course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+	                }
+	            }
+	        }
+
+	        // Условие для активации dive_mode_enabled
+	        if (current_nav_index == (total_cmds - 2) /*&& dist_to_penultimate_wp < 50.0f*/) {
+	            dive_mode_enabled = true;
+	            rollController.reset_I(); // Сброс интегратора
+	            yawController.reset_I();
+	            gcs().send_text(MAV_SEVERITY_INFO, "Dive mode enabled");
+	        }
+
+	        // Управление креном в режиме пикирования
+	        if (dive_mode_enabled) {
+	            rollController.reset_I();
+	        }
+	    }
+	} else {
+	    gcs().send_text(MAV_SEVERITY_INFO, "Not enough waypoints for dive mode");
+	}
+
+	if (last_wp_saved) {
+	    // Ограничение ошибки курса
+	    float max_course_error = 45.0f; // Максимальная ошибка курса
+	    float gain = 3.0f; // Умеренный коэффициент усиления
+//	    if (current_nav_index == (total_cmds - 1)) {
+	    	course_to_target_point = CourseToPointShortDis(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
+			course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+//	    }
+	    course_target_error_ = constrain_float(course_to_target_point, -max_course_error, max_course_error) * gain;
+
+	    gcs().send_text(MAV_SEVERITY_INFO, "course_target_error_: %.2f", course_target_error_);
+
+	    // Управление сервоприводом с ограничением на изменение сигнала
+	    float roll_output = rollController.get_servo_out(course_target_error_ * 100.0f - ahrs.roll_sensor, speed_scaler, true,
+	        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+
+	    // Ограничиваем изменение управляющего сигнала
+	    float max_roll_output_change = 500.0f;
+	    roll_output = constrain_float(roll_output - previous_roll_output, -max_roll_output_change, max_roll_output_change) + previous_roll_output;
+	    previous_roll_output = roll_output;
+
+//	    gcs().send_text(MAV_SEVERITY_INFO, "Roll output: %.2f", roll_output);
+	    return roll_output;
+	} else {
+	    gcs().send_text(MAV_SEVERITY_INFO, "No saved waypoint for dive mode");
+	}
+
+	return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, false,
+	    ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+
 }
 
 /*
@@ -173,13 +526,205 @@ void Plane::stabilize_pitch()
         return;
     }
 
+
+//    int8_t force_elevator = takeoff_tail_hold();
+//    if (force_elevator != 0) {
+//        // Управление элевонами во время взлета
+//        SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_left, 45 * force_elevator);
+//        SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_right, 45 * force_elevator);
+//        return;
+//    }
+
     const float pitch_out = stabilize_pitch_get_pitch_out();
+//    gcs().send_text(MAV_SEVERITY_INFO, "pitch_out: %.6f", pitch_out);
     SRV_Channels::set_output_scaled(SRV_Channel::k_elevator, pitch_out);
+
+//    const float pitch_out = stabilize_pitch_get_pitch_out();
+//	const float roll_out = stabilize_roll_get_roll_out();
+//
+//	// Микширование для элевонов
+//	const float elevon_left = pitch_out + roll_out;
+//	const float elevon_right = pitch_out - roll_out;
+//
+//	// Отправляем сигнал на элевоны
+//	SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_left, elevon_left);
+//	SRV_Channels::set_output_scaled(SRV_Channel::k_elevon_right, elevon_right);
+
+
+
+//    const float elevon_left1 = constrain_float(pitch_out + roll_out, -4500, 4500);
+//    const float elevon_right1 = constrain_float(pitch_out - roll_out, -4500, 4500);
+//
+//
+//
+//    if (!SRV_Channels::output_valid(SRV_Channel::k_elevon_left) ||
+//        !SRV_Channels::output_valid(SRV_Channel::k_elevon_right)) {
+//        gcs().send_text(MAV_SEVERITY_ERROR, "Elevon output invalid!");
+//    }
 }
+
+
+float Plane::DistanceBetween2Points(float lat1_andr, float lon1_andr, float lat2_andr, float lon2_andr)
+{
+//    float bb, l, Bm, eta, Nm, Mm, Q, P;
+//    bb = deg2rad_andr(lat2_andr) - deg2rad_andr(lat1_andr);
+//    l = deg2rad_andr(lon2_andr) - deg2rad_andr(lon1_andr);
+//    Bm = (deg2rad_andr(lat1_andr) + deg2rad_andr(lat2_andr)) / 2;
+//    eta = 0.0067385254 * powf(cosf(Bm), 2);
+//    Nm = 6399698.9018 / sqrtf(1 + eta);
+//    Mm = Nm / (1 + eta);
+//    Q = bb * Mm * (1 - ((2 * powf(l, 2) + powf(l, 2) * powf(sinf(Mm), 2)) / 24));
+//    P = l * Nm * cosf(Bm) * (1 + ((powf(bb, 2) - powf(l, 2) * powf(sinf(Bm), 2)) / 24));
+//
+//
+//    return sqrtf(powf(Q, 2) + powf(P, 2));
+    // Проверка входных данных
+    if (lat1_andr < -90 || lat1_andr > 90 || lat2_andr < -90 || lat2_andr > 90 ||
+        lon1_andr < -180 || lon1_andr > 180 || lon2_andr < -180 || lon2_andr > 180) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "Invalid latitude or longitude values");
+        return 0.0f;
+    }
+
+    float bb, l, Bm, eta, Nm, Mm, Q, P;
+
+    bb = deg2rad_andr(lat2_andr) - deg2rad_andr(lat1_andr);
+    l = deg2rad_andr(lon2_andr) - deg2rad_andr(lon1_andr);
+    Bm = (deg2rad_andr(lat1_andr) + deg2rad_andr(lat2_andr)) / 2;
+
+    // Проверка на полюса
+    if (fabs(cosf(Bm)) < 1e-6) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "Bm is too close to a pole, cos(Bm) is zero");
+        return 0.0f;
+    }
+
+    eta = 0.0067385254 * powf(cosf(Bm), 2);
+
+    // Проверка на деление на ноль
+    if (1 + eta <= 0) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "Invalid value for eta, avoiding division by zero");
+        return 0.0f;
+    }
+
+    Nm = 6399698.9018 / sqrtf(1 + eta);
+    Mm = Nm / (1 + eta);
+
+    if (Mm <= 0) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "Invalid value for Mm, avoiding invalid sinf calculation");
+        return 0.0f;
+    }
+
+    Q = bb * Mm * (1 - ((2 * powf(l, 2) + powf(l, 2) * powf(sinf(Mm), 2)) / 24));
+    P = l * Nm * cosf(Bm) * (1 + ((powf(bb, 2) - powf(l, 2) * powf(sinf(Bm), 2)) / 24));
+
+    // Проверка на идентичные точки
+    if (fabs(Q) < 1e-6 && fabs(P) < 1e-6) {
+        gcs().send_text(MAV_SEVERITY_INFO, "Points are identical, distance is zero");
+        return 0.0f;
+    }
+
+    return sqrtf(powf(Q, 2) + powf(P, 2));
+}
+
+float Plane::deg2rad_andr(float degrees_andr)
+{
+    return degrees_andr * 3.14159265 / 180.0;
+}
+
+
+
+//////////////////////////////////////////
+//                   in function void Plane::exit_mission_callback() comment set_mode(mode_rtl, ModeReason::MISSION_END), file - commands_logic
+//                   in function void ModeAuto::update()  plane.set_mode(plane.mode_rtl, ModeReason::MISSION_END), file - mode_auto.cpp
+/////////////////////////////////////////////
 
 float Plane::stabilize_pitch_get_pitch_out()
 {
+
     const float speed_scaler = get_speed_scaler();
+//    dive_mode_enabled = false; // Изначально режим отключен
+
+    uint16_t total_cmds = plane.mission.num_commands(); // Общее количество команд в миссии
+    // Проверяем, есть ли как минимум две точки в миссии
+//    float total_distance = prev_WP_loc.get_distance(next_WP_loc);
+
+//    float sink_height = (prev_WP_loc.alt - next_WP_loc.alt) * 0.01f;
+//	gcs().send_text(MAV_SEVERITY_INFO, "total_distance=%.2f, sink_height=%.2f", total_distance, sink_height);
+//	gcs().send_text(MAV_SEVERITY_INFO, "prev_WP_loc.alt=%.2f, next_WP_loc.alt=%.2f", prev_WP_loc.alt*0.01f, next_WP_loc.alt*0.01f);
+    if (total_cmds >= 2) {
+        // Проверяем, что GPS фиксирует позицию
+        if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
+            // Получаем текущие координаты GPS
+            latitude = gps.location().lat * 1.0e-7;   // Широта в градусах
+            longitude = gps.location().lng * 1.0e-7;  // Долгота в градусах
+            float altitude = gps.location().alt * 0.01;     // Высота в метрах
+            // Получаем координаты предпоследней точки
+            AP_Mission::Mission_Command penultimate_cmd;
+            bool success = plane.mission.read_cmd_from_storage(total_cmds - 2, penultimate_cmd);
+//            uint16_t penultimate_index = total_cmds - 2; // Индекс предпоследней точки
+            latitude_penultimate_wp = penultimate_cmd.content.location.lat * 1.0e-7;
+            longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
+            dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+            if (success && (plane.mission.get_prev_nav_cmd_wp_index() == penultimate_index || dist_to_penultimate_wp < 50.0f)) {
+//            if (dist_to_penultimate_wp <= 80.0f) {
+            	dive_mode_enabled = true;
+				gcs().send_text(MAV_SEVERITY_WARNING, "Dive mode enabled.");
+            }
+
+            // Логика пикирования
+            if (dive_mode_enabled) {
+            	//set_mode(mode_stabilize, ModeReason::UNKNOWN);
+                // Получаем координаты последней точки
+                AP_Mission::Mission_Command last_cmd;
+                success = plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd);
+                if (success) {
+                    latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
+                    longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
+//                    float altitude_last_wp = last_cmd.content.location.alt * 0.01;
+                    dist_to_target_point = DistanceBetween2Points(latitude, longitude, latitude_last_wp, longitude_last_wp);
+                    float dist_to_current_wp = current_loc.get_distance(next_WP_loc);
+//                    gcs().send_text(MAV_SEVERITY_INFO, "My dist=%f.2", dist_to_target_point);
+//                    gcs().send_text(MAV_SEVERITY_INFO, "   dist=%f.2", dist_to_current_wp);
+
+
+//                    gcs().send_text(MAV_SEVERITY_INFO, "dist=%.6f", dist_to_target_point);
+//                    if (fabs(dist_to_target_point) < 1e-6) {
+////                        // Если расстояние до цели слишком мало, задаем угол пикирования в зависимости от разницы высот
+////                        if (altitude > next_WP_loc.alt * 0.01f) {
+//                            pitch_angle_dive = 90.0f; // Резкий угол вниз
+//////                        } else if (altitude < next_WP_loc.alt * 0.01f) {
+//////                            pitch_angle_dive = -90.0f; // Резкий угол вверх
+////                        } else {
+////                            pitch_angle_dive = 0.0f; // Цель достигнута, угол отсутствует
+////                        }
+//                    } else {
+//                        // Стандартный расчет угла пикирования
+//
+//                    }
+                    pitch_angle_dive = atanf((altitude - next_WP_loc.alt * 0.01f) / (dist_to_current_wp)) * 180 / 3.1415926;
+//                    float wind_correction = wind_speed * cosf(wind_direction - heading);
+//                    pitch_angle_dive = atanf((altitude - next_WP_loc.alt * 0.01f) / dist_to_target_point) * 180 / 3.1415926;
+//                    gcs().send_text(MAV_SEVERITY_INFO, "pitch_angle_dive=%.6f", pitch_angle_dive);
+//                    gcs().send_text(MAV_SEVERITY_INFO, "pitch_angle_dive2=%.6f", (float)degrees(atanf(((prev_WP_loc.alt - next_WP_loc.alt) * 0.01f)/(prev_WP_loc.get_distance(next_WP_loc)))));
+//                    gcs().send_text(MAV_SEVERITY_WARNING, "DIVE MODE");
+                    // Отправляем угол на сервопривод
+//                    current_loc.get_bearing(next_WP_loc);
+//                    current_loc.offset_bearing_and_pitch(current_loc.get_bearing(next_WP_loc), pitch_angle_dive, 1000);
+//                    float yat = atanf(gps.velocity().z/gps.ground_speed())*180/3.1415926;
+                    return pitchController.get_servo_out(pitch_angle_dive * (-100.0f) - ahrs.pitch_sensor, speed_scaler, true,
+                                                  ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//                    return pitchController.get_servo_out(pitch_angle_dive * (-100.0f) - yat* (100.0f), speed_scaler, false,
+//                                                  ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+                } else {
+                    gcs().send_text(MAV_SEVERITY_WARNING, "Failed to read last waypoint");
+                }
+            }
+        }
+    } else {
+        gcs().send_text(MAV_SEVERITY_INFO, "Not enough waypoints for dive mode");
+    }
+
+
+
 #if HAL_QUADPLANE_ENABLED
     if (!quadplane.use_fw_attitude_controllers()) {
         // use the VTOL rate for control, to ensure consistency
@@ -226,7 +771,9 @@ float Plane::stabilize_pitch_get_pitch_out()
         throttle_at_zero()) {
         demanded_pitch = landing.get_pitch_cd();
     }
-
+//    gcs().send_text(MAV_SEVERITY_INFO, "demanded_pitch: Ang=%.6f", (float)demanded_pitch);
+//    gcs().send_text(MAV_SEVERITY_INFO, "ahrs.pitch_sensor=%.6f", (float)ahrs.pitch_sensor);
+//    gcs().send_text(MAV_SEVERITY_INFO, "demanded_pitch=%.6f", (float)demanded_pitch);
     return pitchController.get_servo_out(demanded_pitch - ahrs.pitch_sensor, speed_scaler, disable_integrator,
                                          ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
 }

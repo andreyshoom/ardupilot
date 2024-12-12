@@ -466,7 +466,7 @@ public:
     Number mode_number() const override { return Number::STABILIZE; }
     const char *name() const override { return "STABILIZE"; }
     const char *name4() const override { return "STAB"; }
-
+//    bool dive_mode_enabled = false;
     // methods that affect movement of the vehicle in this mode
     void update() override;
 

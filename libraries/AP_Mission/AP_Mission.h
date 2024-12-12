@@ -782,6 +782,10 @@ public:
     void set_log_start_mission_item_bit(uint32_t bit) { log_start_mission_item_bit = bit; }
 #endif
 
+    uint16_t get_prev_nav_cmd_wp_index() const {
+        return _prev_nav_cmd_wp_index;
+    }
+
 private:
     static AP_Mission *_singleton;
 

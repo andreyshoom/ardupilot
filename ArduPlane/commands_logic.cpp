@@ -80,7 +80,7 @@ bool Plane::start_command(const AP_Mission::Mission_Command& cmd)
         break;
 
     case MAV_CMD_NAV_RETURN_TO_LAUNCH:
-        set_mode(mode_rtl, ModeReason::MISSION_CMD);
+//        set_mode(mode_rtl, ModeReason::MISSION_CMD);
         break;
 
     case MAV_CMD_NAV_CONTINUE_AND_CHANGE_ALT:
@@ -262,7 +262,7 @@ bool Plane::verify_command(const AP_Mission::Mission_Command& cmd)        // Ret
         return verify_loiter_to_alt(cmd);
 
     case MAV_CMD_NAV_RETURN_TO_LAUNCH:
-        return verify_RTL();
+//        return verify_RTL();
 
     case MAV_CMD_NAV_CONTINUE_AND_CHANGE_ALT:
         return verify_continue_and_change_alt();
@@ -328,21 +328,21 @@ bool Plane::verify_command(const AP_Mission::Mission_Command& cmd)        // Ret
 
 void Plane::do_RTL(int32_t rtl_altitude_AMSL_cm)
 {
-    auto_state.next_wp_crosstrack = false;
-    auto_state.crosstrack = false;
-    prev_WP_loc = current_loc;
-    next_WP_loc = calc_best_rally_or_home_location(current_loc, rtl_altitude_AMSL_cm);
-    setup_terrain_target_alt(next_WP_loc);
-    set_target_altitude_location(next_WP_loc);
-
-    if (aparm.loiter_radius < 0) {
-        loiter.direction = -1;
-    } else {
-        loiter.direction = 1;
-    }
-
-    setup_glide_slope();
-    setup_turn_angle();
+//    auto_state.next_wp_crosstrack = false;
+//    auto_state.crosstrack = false;
+//    prev_WP_loc = current_loc;
+//    next_WP_loc = calc_best_rally_or_home_location(current_loc, rtl_altitude_AMSL_cm);
+//    setup_terrain_target_alt(next_WP_loc);
+//    set_target_altitude_location(next_WP_loc);
+//
+//    if (aparm.loiter_radius < 0) {
+//        loiter.direction = -1;
+//    } else {
+//        loiter.direction = 1;
+//    }
+//
+//    setup_glide_slope();
+//    setup_turn_angle();
 }
 
 Location Plane::calc_best_rally_or_home_location(const Location &_current_loc, float rtl_home_alt_amsl_cm) const
@@ -780,19 +780,20 @@ bool Plane::verify_loiter_to_alt(const AP_Mission::Mission_Command &cmd)
 
 bool Plane::verify_RTL()
 {
-    if (g.rtl_radius < 0) {
-        loiter.direction = -1;
-    } else {
-        loiter.direction = 1;
-    }
-    update_loiter(abs(g.rtl_radius));
-	if (auto_state.wp_distance <= (uint32_t)MAX(get_wp_radius(),0) || 
-        reached_loiter_target()) {
-			gcs().send_text(MAV_SEVERITY_INFO,"Reached RTL location");
-			return true;
-    } else {
-        return false;
-	}
+//    if (g.rtl_radius < 0) {
+//        loiter.direction = -1;
+//    } else {
+//        loiter.direction = 1;
+//    }
+//    update_loiter(abs(g.rtl_radius));
+//	if (auto_state.wp_distance <= (uint32_t)MAX(get_wp_radius(),0) ||
+//        reached_loiter_target()) {
+//			gcs().send_text(MAV_SEVERITY_INFO,"Reached RTL location");
+//			return true;
+//    } else {
+//        return false;
+//	}
+	return false;
 }
 
 bool Plane::verify_continue_and_change_alt()
@@ -1036,7 +1037,8 @@ bool Plane::verify_command_callback(const AP_Mission::Mission_Command& cmd)
 void Plane::exit_mission_callback()
 {
     if (control_mode == &mode_auto) {
-        set_mode(mode_rtl, ModeReason::MISSION_END);
+//        set_mode(mode_rtl, ModeReason::MISSION_END);
+
         gcs().send_text(MAV_SEVERITY_INFO, "Mission complete, changing mode to RTL");
     }
 }
@@ -1051,18 +1053,18 @@ bool Plane::verify_landing_vtol_approach(const AP_Mission::Mission_Command &cmd)
     loiter.direction = direction;
 
     switch (vtol_approach_s.approach_stage) {
-        case VTOLApproach::Stage::RTL:
-            {
-                // fly home and loiter at RTL alt
-                nav_controller->update_loiter(cmd.content.location, abs_radius, direction);
-                if (plane.reached_loiter_target()) {
-                    // decend to Q RTL alt
-                    plane.do_RTL(plane.home.alt + plane.quadplane.qrtl_alt*100UL);
-                    plane.loiter_angle_reset();
-                    vtol_approach_s.approach_stage = VTOLApproach::Stage::LOITER_TO_ALT;
-                }
-                break;
-            }
+//        case VTOLApproach::Stage::RTL:
+//            {
+//                // fly home and loiter at RTL alt
+//                nav_controller->update_loiter(cmd.content.location, abs_radius, direction);
+//                if (plane.reached_loiter_target()) {
+//                    // decend to Q RTL alt
+//                    plane.do_RTL(plane.home.alt + plane.quadplane.qrtl_alt*100UL);
+//                    plane.loiter_angle_reset();
+//                    vtol_approach_s.approach_stage = VTOLApproach::Stage::LOITER_TO_ALT;
+//                }
+//                break;
+//            }
         case VTOLApproach::Stage::LOITER_TO_ALT:
             {
                 nav_controller->update_loiter(cmd.content.location, abs_radius, direction);

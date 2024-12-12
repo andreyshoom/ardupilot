@@ -9,6 +9,11 @@ void ModeStabilize::update()
 
 void ModeStabilize::run()
 {
+//	dive_mode_enabled = true;
+//	const char* message = "--------------------true---------------------";
+//
+//	    // Уровень важности сообщения: MAV_SEVERITY_INFO (информационное сообщение)
+//	gcs().send_text(MAV_SEVERITY_INFO, "%s", message);
     plane.stabilize_roll();
     plane.stabilize_pitch();
     stabilize_stick_mixing_direct();

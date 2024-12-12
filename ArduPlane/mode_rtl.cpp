@@ -7,7 +7,7 @@ bool ModeRTL::_enter()
     plane.do_RTL(plane.get_RTL_altitude_cm());
     plane.rtl.done_climb = false;
 #if HAL_QUADPLANE_ENABLED
-    plane.vtol_approach_s.approach_stage = Plane::VTOLApproach::Stage::RTL;
+//    plane.vtol_approach_s.approach_stage = Plane::VTOLApproach::Stage::RTL;
 
     // Quadplane specific checks
     if (plane.quadplane.available()) {

@@ -53,8 +53,8 @@ const AP_Param::GroupInfo AP_PitchController::var_info[] = {
     // @Units: deg/s
     // @Increment: 1
     // @User: Advanced
-    AP_GROUPINFO("2SRV_RMAX_DN",     5, AP_PitchController, gains.rmax_neg,   0.0f),
-
+    AP_GROUPINFO("2SRV_RMAX_DN",     5, AP_PitchController, gains.rmax_neg,   50.0f),
+//	AP_GROUPINFO("2SRV_RMAX_DN",     5, AP_PitchController, gains.rmax_neg,   0.0f),
     // @Param: 2SRV_RLL
     // @DisplayName: Roll compensation
     // @Description: Gain added to pitch to keep aircraft from descending or ascending in turns. Increase in increments of 0.05 to reduce altitude loss. Decrease for altitude gain.

@@ -184,6 +184,7 @@ public:
 
 private:
 
+
     // key aircraft parameters passed to multiple libraries
     AP_FixedWing aparm;
 
@@ -202,6 +203,29 @@ private:
     RC_Channel *channel_flap;
     RC_Channel *channel_airbrake;
 
+    bool dive_mode_enabled = false;
+    float pitch_angle_dive = 0;
+    float dist_to_target_point = 0;
+    float course_to_target_point = 0;
+    float course_target_error_ = 0;
+    float previous_error = 0.0f;
+    float last_course_to_target_point = 0.0f;
+    float latitude_last_wp = 0.0f;
+    float longitude_last_wp = 0.0f;
+    float latitude_penultimate_wp = 0.0f;
+	float longitude_penultimate_wp = 0.0f;
+	float dist_to_penultimate_wp = 0.0f;
+	float previous_course_target_error_ = 0.0f;
+	float previous_roll_output = 0.0f;
+
+	float saved_latitude_last_wp = 0.0f;
+	float saved_longitude_last_wp = 0.0f;
+	bool last_wp_saved = false;
+
+	uint16_t current_nav_index = 0;
+
+	float latitude = 0.0f;
+	float longitude = 0.0f;
     // scaled roll limit based on pitch
     int32_t roll_limit_cd;
     float pitch_limit_min;
@@ -382,7 +406,7 @@ private:
     class VTOLApproach {
     public:
         enum class Stage {
-            RTL,
+//            RTL,
             LOITER_TO_ALT,
             ENSURE_RADIUS,
             WAIT_FOR_BREAKOUT,
@@ -1099,6 +1123,12 @@ private:
     void setup_turn_angle(void);
     bool reached_loiter_target(void);
 
+    //dive_mode
+    float DistanceBetween2Points(float lat1_andr, float lon1_andr, float lat2_andr, float lon2_andr);
+	float deg2rad_andr(float degrees_andr);
+	float CourseToPointShortDis(float lat1_andr, float lon1_andr, float lat2_andr, float lon2_andr);
+	float AngleReduction0_360_andr(float angle_andr);
+	float AngleErrTo180(float angle);
     // radio.cpp
     void set_control_channels(void) override;
     void init_rc_in();
