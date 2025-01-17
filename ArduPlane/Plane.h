@@ -204,6 +204,8 @@ private:
     RC_Channel *channel_airbrake;
 
     bool dive_mode_enabled = false;
+    bool flag_for_roll_dive = false;
+    bool flag_for_pitch_dive = false;
     float pitch_angle_dive = 0;
     float dist_to_target_point = 0;
     float course_to_target_point = 0;
@@ -1129,6 +1131,7 @@ private:
 	float CourseToPointShortDis(float lat1_andr, float lon1_andr, float lat2_andr, float lon2_andr);
 	float AngleReduction0_360_andr(float angle_andr);
 	float AngleErrTo180(float angle);
+	void fly_to_last_waypoint();
     // radio.cpp
     void set_control_channels(void) override;
     void init_rc_in();

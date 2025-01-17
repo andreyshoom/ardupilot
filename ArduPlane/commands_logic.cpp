@@ -637,6 +637,22 @@ bool Plane::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
         nav_controller->update_waypoint(current_loc, flex_next_WP_loc);
     }
 
+
+    // CHECK LAST WP
+    uint16_t total_cmds = mission.num_commands();
+    uint16_t current_nav_index_dive = mission.get_current_nav_cmd().index;
+
+    if (current_nav_index_dive == (total_cmds - 2)) {
+        // DIST TO PRELAST WP
+        float wp_dist = current_loc.get_distance(flex_next_WP_loc);
+
+        // IF LESS 20m -> PASS WP
+        if (wp_dist <= 20.0f) {
+            gcs().send_text(MAV_SEVERITY_INFO, "Penultimate waypoint reached by distance (60m).");
+            return true;
+        }
+    }
+
     // see if the user has specified a maximum distance to waypoint
     // If override with p3 - then this is not used as it will overfly badly
     if (g.waypoint_max_radius > 0 &&
