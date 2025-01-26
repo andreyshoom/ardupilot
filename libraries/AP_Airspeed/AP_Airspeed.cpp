@@ -157,7 +157,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     
     // @Param: _OFF_PCNT
     // @DisplayName: Maximum offset cal speed error 
-    // @Description: The maximum percentage speed change in airspeed reports that is allowed due to offset changes between calibrations before a warning is issued. This potential speed error is in percent of ASPD_FBW_MIN. 0 disables. Helps warn of calibrations without pitot being covered.
+    // @Description: The maximum percentage speed change in airspeed reports that is allowed due to offset changes between calibrations before a warning is issued. This potential speed error is in percent of AIRSPEED_MIN. 0 disables. Helps warn of calibrations without pitot being covered.
     // @Range: 0.0 10.0
     // @Units: %
     // @User: Advanced
@@ -526,7 +526,7 @@ void AP_Airspeed::calibrate(bool in_startup)
             continue;
         }
         if (sensor[i] == nullptr) {
-            GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "Airspeed %u not initalized, cannot cal", i+1);
+            GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "Airspeed %u not initialized, cannot cal", i+1);
             continue;
         }
         state[i].cal.start_ms = AP_HAL::millis();

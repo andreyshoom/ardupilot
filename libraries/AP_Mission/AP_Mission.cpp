@@ -736,16 +736,9 @@ bool AP_Mission::get_item(uint16_t index, mavlink_mission_item_int_t& ret_packet
         return false;
     }
 
-    // minimal placeholder values during read-from-storage
-    tmp.target_system = 1;     // unused sysid
-    tmp.target_component =  1; // unused compid
-
-    // 0=home, higher number/s = mission item number.
-    tmp.seq = index;
-
     // retrieve mission from eeprom
     AP_Mission::Mission_Command cmd {};
-    if (!read_cmd_from_storage(tmp.seq, cmd)) {
+    if (!read_cmd_from_storage(index, cmd)) {
         return false;
     }
     // convert into mavlink-ish format for lua and friends.
@@ -756,13 +749,7 @@ bool AP_Mission::get_item(uint16_t index, mavlink_mission_item_int_t& ret_packet
     // set packet's current field to 1 if this is the command being executed
     if (cmd.id == (uint16_t)get_current_nav_cmd().index) {
         tmp.current = 1;
-    } else {
-        tmp.current = 0;
     }
-
-    // set auto continue to 1, becasue that's what's done elsewhere.
-    tmp.autocontinue = 1;     // 1 (true), 0 (false)
-    tmp.command = cmd.id;
 
     ret_packet = tmp;
 
@@ -1571,18 +1558,14 @@ MAV_MISSION_RESULT AP_Mission::convert_MISSION_ITEM_INT_to_MISSION_ITEM(const ma
 //  NOTE: callers to this method current fill parts of "packet" in before calling this method, so do NOT attempt to zero the entire packet in here
 bool AP_Mission::mission_cmd_to_mavlink_int(const AP_Mission::Mission_Command& cmd, mavlink_mission_item_int_t& packet)
 {
-    // command's position in mission list and mavlink id
-    packet.seq = cmd.index;
-    packet.command = cmd.id;
-
-    // set defaults
-    packet.current = 0;     // 1 if we are passing back the mission command that is currently being executed
-    packet.param1 = 0;
-    packet.param2 = 0;
-    packet.param3 = 0;
-    packet.param4 = 0;
-    packet.frame = 0;
-    packet.autocontinue = 1;
+    // Make sure return packed is zeroed
+    // Strictly params 1 to 4 and alt should be defaulted to NaN
+    // x and y should be defaulted to INT32_MAX
+    packet = {
+        seq: cmd.index,
+        command: cmd.id,
+        autocontinue: 1,
+    };
 
     // command specific conversions from mission command to mavlink packet
     switch (cmd.id) {
@@ -2446,15 +2429,21 @@ bool AP_Mission::jump_to_closest_mission_leg(const Location &current_loc)
     uint16_t landing_start_index = 0;
     float min_distance = -1;
 
+    // This defines the maximum number of waypoints that will be searched, this limits the worst case runtime
+    uint16_t search_remaining = 1000;
+
     // Go through mission and check each DO_RETURN_PATH_START
     for (uint16_t i = 1; i < num_commands(); i++) {
-        Mission_Command tmp;
-        if (read_cmd_from_storage(i, tmp) && (tmp.id == MAV_CMD_DO_RETURN_PATH_START)) {
+        if (get_command_id(i) == uint16_t(MAV_CMD_DO_RETURN_PATH_START)) {
             uint16_t tmp_index;
             float tmp_distance;
-            if (distance_to_mission_leg(i, tmp_distance, tmp_index, current_loc) && (min_distance < 0 || tmp_distance <= min_distance)){
+            if (distance_to_mission_leg(i, search_remaining, tmp_distance, tmp_index, current_loc) && (min_distance < 0 || tmp_distance <= min_distance)){
                 min_distance = tmp_distance;
                 landing_start_index = tmp_index;
+            }
+            if (search_remaining == 0) {
+                // Run out of time to search, stop and return the best so far
+                break;
             }
         }
     }
@@ -2626,7 +2615,7 @@ reset_do_jump_tracking:
 
 // Approximate the distance travelled to return to the mission path. DO_JUMP commands are observed in look forward.
 // Stop searching once reaching a landing or do-land-start
-bool AP_Mission::distance_to_mission_leg(uint16_t start_index, float &rejoin_distance, uint16_t &rejoin_index, const Location& current_loc)
+bool AP_Mission::distance_to_mission_leg(uint16_t start_index, uint16_t &search_remaining, float &rejoin_distance, uint16_t &rejoin_index, const Location& current_loc)
 {
     Location prev_loc;
     Mission_Command temp_cmd;
@@ -2642,7 +2631,7 @@ bool AP_Mission::distance_to_mission_leg(uint16_t start_index, float &rejoin_dis
 
     // run through remainder of mission to approximate a distance to landing
     uint16_t index = start_index;
-    for (uint8_t i=0; i<UINT8_MAX; i++) {
+    for (; search_remaining > 0; search_remaining--) {
         // search until the end of the mission command list
         for (uint16_t cmd_index = index; cmd_index <= (unsigned)_cmd_total; cmd_index++) {
             if (get_next_cmd(cmd_index, temp_cmd, true, false)) {

@@ -140,6 +140,9 @@ void IRAM_ATTR Scheduler::thread_create_trampoline(void *ctx)
     AP_HAL::MemberProc *t = (AP_HAL::MemberProc *)ctx;
     (*t)();
     free(t);
+
+    // delete the calling task
+    vTaskDelete(NULL);
 }
 
 /*
@@ -565,7 +568,9 @@ void IRAM_ATTR Scheduler::_main_thread(void *arg)
         sched->delay_microseconds(250);
 
         // run stats periodically
+#ifdef SCHEDDEBUG
         sched->print_stats();
+#endif
         sched->print_main_loop_rate();
 
         if (ESP_OK != esp_task_wdt_reset()) {

@@ -215,105 +215,139 @@ float Plane::CourseToPointShortDis(float lat1_andr, float lon1_andr, float lat2_
 
 float Plane::stabilize_roll_get_roll_out()
 {
-	const float speed_scaler = get_speed_scaler();
-	uint16_t total_cmds = plane.mission.num_commands();
+	 const float speed_scaler = get_speed_scaler();
+	#if HAL_QUADPLANE_ENABLED
+	    if (!quadplane.use_fw_attitude_controllers()) {
+	        // use the VTOL rate for control, to ensure consistency
+	        const auto &pid_info = quadplane.attitude_control->get_rate_roll_pid().get_pid_info();
 
-    latitude = gps.location().lat * 1.0e-7;
-    longitude = gps.location().lng * 1.0e-7;
-	if (total_cmds >= 2 && !flag_for_roll_dive) {
-	    if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
-	        // Получаем текущую точку миссии
-	        current_nav_index = plane.mission.get_current_nav_index();
-
-	        // Проверяем, летит ли самолет к предпоследней точке
-	        if (current_nav_index == (total_cmds - 2)) {
-	            // Самолет направляется к предпоследней точке
-	            AP_Mission::Mission_Command penultimate_cmd;
-//	            fly_to_last_waypoint();
-	            // прочитана ли предпоследняя точка из миссии
-	            if (plane.mission.read_cmd_from_storage(current_nav_index, penultimate_cmd)) {
-	                latitude_penultimate_wp = penultimate_cmd.content.location.lat * 1.0e-7;
-	                longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
-	                dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
-//	                float dist_to_current_wp2 = current_loc.get_distance(next_WP_loc);
-
-	                // Проверяем расстояние до предпоследней точки
-	                if (dist_to_penultimate_wp <= 50.0f && current_nav_index == (total_cmds - 2)) {
-	                    gcs().send_text(MAV_SEVERITY_INFO, "Approaching penultimate waypoint (ROLL)");
-
-	                    // Получаем координаты последней точки
-	                    AP_Mission::Mission_Command last_cmd;
-	                    if (plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd)) {
-	                        saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
-	                        saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
-	                        last_wp_saved = true;
-	                        flag_for_roll_dive = true;
-	                        // Расчет курса на последнюю точку
-	                        course_to_target_point = CourseToPointShortDis(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
-	                        course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
-//	                        float course_to_current_wp = current_loc.get_bearing(next_WP_loc);
-	                    }
-	                } else {
-	                    // Если еще не приближаемся к предпоследней точке, курс на нее
-	                    course_to_target_point = CourseToPointShortDis(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
-	                    course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
-	                }
+	        // scale FF to angle P
+	        if (quadplane.option_is_set(QuadPlane::OPTION::SCALE_FF_ANGLE_P)) {
+	            const float mc_angR = quadplane.attitude_control->get_angle_roll_p().kP()
+	                * quadplane.attitude_control->get_last_angle_P_scale().x;
+	            if (is_positive(mc_angR)) {
+	                rollController.set_ff_scale(MIN(1.0, 1.0 / (mc_angR * rollController.tau())));
 	            }
 	        }
+
+	        const float roll_out = rollController.get_rate_out(degrees(pid_info.target), speed_scaler);
+	        /* when slaving fixed wing control to VTOL control we need to decay the integrator to prevent
+	           opposing integrators balancing between the two controllers
+	        */
+	        rollController.decay_I();
+	        return roll_out;
 	    }
-	}
+	#endif
 
-	if (last_wp_saved) {
-	    // Ограничение ошибки курса
-	    float max_course_error = 45.0f; // Максимальная ошибка курса
-	    float gain = 3.0f; // Умеренный коэффициент усиления
-		course_to_target_point = CourseToPointShortDis(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
-		course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
-	    course_target_error_ = constrain_float(course_to_target_point, -max_course_error, max_course_error) * gain;
-
-	    // Управление сервоприводом с ограничением на изменение сигнала
-	    float roll_output = rollController.get_servo_out(course_target_error_ * 100.0f - ahrs.roll_sensor, speed_scaler, true,
-	        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
-
-	    // Ограничиваем изменение управляющего сигнала
-	    float max_roll_output_change = 500.0f;
-	    roll_output = constrain_float(roll_output - previous_roll_output, -max_roll_output_change, max_roll_output_change) + previous_roll_output;
-	    previous_roll_output = roll_output;
-
-	    return roll_output;
-	}
+	    bool disable_integrator = false;
+	    if (control_mode == &mode_stabilize && channel_roll->get_control_in() != 0) {
+	        disable_integrator = true;
+	    }
+	    return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, disable_integrator,
+	                                        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
 
 
-#if HAL_QUADPLANE_ENABLED
-    if (!quadplane.use_fw_attitude_controllers()) {
-        // use the VTOL rate for control, to ensure consistency
-        const auto &pid_info = quadplane.attitude_control->get_rate_roll_pid().get_pid_info();
-
-        // scale FF to angle P
-        if (quadplane.option_is_set(QuadPlane::OPTION::SCALE_FF_ANGLE_P)) {
-            const float mc_angR = quadplane.attitude_control->get_angle_roll_p().kP()
-                * quadplane.attitude_control->get_last_angle_P_scale().x;
-            if (is_positive(mc_angR)) {
-                rollController.set_ff_scale(MIN(1.0, 1.0 / (mc_angR * rollController.tau())));
-            }
-        }
-
-        const float roll_out = rollController.get_rate_out(degrees(pid_info.target), speed_scaler);
-        /* when slaving fixed wing control to VTOL control we need to decay the integrator to prevent
-           opposing integrators balancing between the two controllers
-        */
-        rollController.decay_I();
-        return roll_out;
-    }
-#endif
-
-    bool disable_integrator = false;
-    if (control_mode == &mode_stabilize && channel_roll->get_control_in() != 0) {
-        disable_integrator = true;
-    }
-//    gcs().send_text(MAV_SEVERITY_INFO, "Normal roll");
-    return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, disable_integrator,
-                                        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//
+//	const float speed_scaler = get_speed_scaler();
+//	uint16_t total_cmds = plane.mission.num_commands();
+//
+//    latitude = gps.location().lat * 1.0e-7;
+//    longitude = gps.location().lng * 1.0e-7;
+//	if (total_cmds >= 2 && !flag_for_roll_dive) {
+//	    if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
+//	        // Получаем текущую точку миссии
+//	        current_nav_index = plane.mission.get_current_nav_index();
+//
+//	        // Проверяем, летит ли самолет к предпоследней точке
+//	        if (current_nav_index == (total_cmds - 2)) {
+//	            // Самолет направляется к предпоследней точке
+//	            AP_Mission::Mission_Command penultimate_cmd;
+////	            fly_to_last_waypoint();
+//	            // прочитана ли предпоследняя точка из миссии
+//	            if (plane.mission.read_cmd_from_storage(current_nav_index, penultimate_cmd)) {
+//	                latitude_penultimate_wp = penultimate_cmd.content.location.lat * 1.0e-7;
+//	                longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
+//	                dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+////	                float dist_to_current_wp2 = current_loc.get_distance(next_WP_loc);
+//
+//	                // Проверяем расстояние до предпоследней точки
+//	                if (verify_nav_wp(penultimate_cmd)) {
+//	                    gcs().send_text(MAV_SEVERITY_INFO, "Penultimate waypoint (ROLL)");
+//	                    // Получаем координаты последней точки
+//	                    AP_Mission::Mission_Command last_cmd;
+//	                    if (plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd)) {
+//	                        saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
+//	                        saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
+//	                        last_wp_saved = true;
+//	                        flag_for_roll_dive = true;
+//	                        // Расчет курса на последнюю точку
+//	                        course_to_target_point = CourseToPointShortDis(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
+//	                        course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+////	                        float course_to_current_wp = current_loc.get_bearing(next_WP_loc);
+//	                    }
+//	                } else {
+//	                    // Если еще не приближаемся к предпоследней точке, курс на нее
+//	                    course_to_target_point = CourseToPointShortDis(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
+//	                    course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+//	                }
+//	            }
+//	        }
+//	    }
+//	}
+//
+//	if (last_wp_saved) {
+//	    // Ограничение ошибки курса
+//	    float max_course_error = 50.0f; // Максимальная ошибка курса
+//	    float gain = 3.5f; // Умеренный коэффициент усиления
+////		course_to_target_point2 = CourseToPointShortDis(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
+//		course_to_target_point = CourseToPointShortDis(current_loc.lat* 1.0e-7, current_loc.lng* 1.0e-7, saved_latitude_last_wp, saved_longitude_last_wp);
+//		course_to_target_point = wrap_180(course_to_target_point - gps.ground_course());
+//	    course_target_error_ = constrain_float(course_to_target_point, -max_course_error, max_course_error) * gain;
+//
+//	    // Управление сервоприводом с ограничением на изменение сигнала
+//	    float roll_output = rollController.get_servo_out(course_target_error_ * 100.0f - ahrs.roll_sensor, speed_scaler, true,
+//	        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
+//
+//	    // Ограничиваем изменение управляющего сигнала
+//	    float max_roll_output_change = 500.0f;
+//	    roll_output = constrain_float(roll_output - previous_roll_output, -max_roll_output_change, max_roll_output_change) + previous_roll_output;
+//	    previous_roll_output = roll_output;
+//
+//	    return roll_output;
+//	}
+//
+//
+//
+//#if HAL_QUADPLANE_ENABLED
+//    if (!quadplane.use_fw_attitude_controllers()) {
+//        // use the VTOL rate for control, to ensure consistency
+//        const auto &pid_info = quadplane.attitude_control->get_rate_roll_pid().get_pid_info();
+//
+//        // scale FF to angle P
+//        if (quadplane.option_is_set(QuadPlane::OPTION::SCALE_FF_ANGLE_P)) {
+//            const float mc_angR = quadplane.attitude_control->get_angle_roll_p().kP()
+//                * quadplane.attitude_control->get_last_angle_P_scale().x;
+//            if (is_positive(mc_angR)) {
+//                rollController.set_ff_scale(MIN(1.0, 1.0 / (mc_angR * rollController.tau())));
+//            }
+//        }
+//
+//        const float roll_out = rollController.get_rate_out(degrees(pid_info.target), speed_scaler);
+//        /* when slaving fixed wing control to VTOL control we need to decay the integrator to prevent
+//           opposing integrators balancing between the two controllers
+//        */
+//        rollController.decay_I();
+//        return roll_out;
+//    }
+//#endif
+//
+//    bool disable_integrator = false;
+//    if (control_mode == &mode_stabilize && channel_roll->get_control_in() != 0) {
+//        disable_integrator = true;
+//    }
+////    gcs().send_text(MAV_SEVERITY_INFO, "Normal roll");
+//    return rollController.get_servo_out(nav_roll_cd - ahrs.roll_sensor, speed_scaler, disable_integrator,
+//                                        ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
 }
 
 void Plane::fly_to_last_waypoint()
@@ -459,16 +493,15 @@ float Plane::stabilize_pitch_get_pitch_out()
     // Получаем текущие координаты GPS
     latitude = gps.location().lat * 1.0e-7;   // Широта в градусах
     longitude = gps.location().lng * 1.0e-7;  // Долгота в градусах
-    float altitude = gps.location().alt * 0.01;     // Высота в метрах
-
+//    float altitude = gps.location().alt * 0.01;     // Высота в метрах
+    current_nav_index = plane.mission.get_current_nav_index();
     if (total_cmds >= 2 && !flag_for_pitch_dive) {
         // Проверяем, что GPS фиксирует позицию
         if (gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
         	// Получаем текущую точку миссии
-        	current_nav_index = plane.mission.get_current_nav_index();
 
         	// Проверяем, летит ли самолет к предпоследней точке
-			if (current_nav_index == (total_cmds - 2)) {
+			if (current_nav_index == (total_cmds - 2) /*&& dist_to_penultimate_wp <= 50.0f*/) {
 				// Самолет направляется к предпоследней точке
 				AP_Mission::Mission_Command penultimate_cmd;
 				if (plane.mission.read_cmd_from_storage(current_nav_index, penultimate_cmd)) {
@@ -476,33 +509,83 @@ float Plane::stabilize_pitch_get_pitch_out()
 					longitude_penultimate_wp = penultimate_cmd.content.location.lng * 1.0e-7;
 					dist_to_penultimate_wp = DistanceBetween2Points(latitude, longitude, latitude_penultimate_wp, longitude_penultimate_wp);
 
-					// Проверяем расстояние до предпоследней точки
-//					if (dist_to_penultimate_wp <= 50.0f && current_nav_index == (total_cmds - 2)) {
-						AP_Mission::Mission_Command last_cmd;
-						gcs().send_text(MAV_SEVERITY_INFO, "Approaching penultimate waypoint (PITCH)");
-						if(plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd)){
-							// Получаем координаты последней точки
-							saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
-							saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
-							dive_mode_enabled = true;
-							flag_for_pitch_dive = true;
-						}
+					// Проверяем расстояние до предпоследнй точки
+//					if (verify_nav_wp(penultimate_cmd) || plane.mission.get_current_nav_index() == (total_cmds - 1)) {
 //					}
 				}
 			}
         }
+        plane.mission._prev_nav_cmd_wp_index()
+        AP_Mission::Mission_Command last_cmd;
+		if(current_nav_index == (total_cmds - 1) && plane.mission.read_cmd_from_storage(total_cmds - 1, last_cmd)){
+			gcs().send_text(MAV_SEVERITY_INFO, "(___PITCH____)");
+			// Получаем координаты последней точки
+			saved_latitude_last_wp = last_cmd.content.location.lat * 1.0e-7;
+			saved_longitude_last_wp = last_cmd.content.location.lng * 1.0e-7;
+			saved_altitude_last_wp = last_cmd.content.location.alt * 0.01f;
+			dive_mode_enabled = true;
+			flag_for_pitch_dive = true;
+		}
     }
+
+
+
+//    const AP_Mission::Mission_Command &last_wp = mission.get_nav_item(mission.num_commands() - 1);
+//
+//    // Расстояние до последней точки
+//    float horizontal_distance = ahrs.get_distance_to(last_wp);
+//
+//    // Разница высот между текущей высотой и высотой последней точки
+//    float altitude_difference = ahrs.altitude - last_wp.alt;
+//
+//    // Расчёт угла тангажа (в радианах)
+//    float dive_angle = atan2(altitude_difference, horizontal_distance);
+//
+//    // Преобразование угла в сотые доли градуса
+//    float dive_pitch_cd = degrees(dive_angle) * 100;
+//
+//    // Ограничиваем угол тангажа в безопасных пределах
+//    dive_pitch_cd = constrain_float(dive_pitch_cd, -4500, 0); // Максимум -45°
+
+
+
+
+
     // Логика пикирования
     if (dive_mode_enabled) {
-		dist_to_target_point = DistanceBetween2Points(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
-		float dist_to_current_wp = current_loc.get_distance(next_WP_loc);
-		pitch_angle_dive = atanf((altitude - next_WP_loc.alt * 0.01f) / (dist_to_current_wp)) * 180 / 3.1415926;
+    	dist_to_target_point = DistanceBetween2Points(latitude, longitude, saved_latitude_last_wp, saved_longitude_last_wp);
+		float dist_to_target_point2 = DistanceBetween2Points(current_loc.lat* 1.0e-7, current_loc.lng* 1.0e-7, saved_latitude_last_wp, saved_longitude_last_wp);
+//		float dist_to_current_wp = current_loc.get_distance(next_WP_loc);
+
+//		float predicted_altitude = altitude - gps.velocity().z * (dist_to_current_wp / gps.ground_speed());
+		pitch_angle_dive = atanf((current_loc.alt*0.01f - next_WP_loc.alt*0.01f) / (dist_to_target_point2)) * 180 / 3.1415926;
+//		if (counter == 2) {
+
+			gcs().send_text(MAV_SEVERITY_INFO, "lt: %.6f", saved_latitude_last_wp);
+			gcs().send_text(MAV_SEVERITY_INFO, "lg: %.6f", saved_longitude_last_wp);
+//			gcs().send_text(MAV_SEVERITY_INFO, "alt_1: %.2f", altitude);
+//			gcs().send_text(MAV_SEVERITY_INFO, "alt_2: %.2f", (float)next_WP_loc.alt*0.01f);
+//			gcs().send_text(MAV_SEVERITY_INFO, "alt_3: %.2f", (float)current_loc.alt*0.01f);
+//			gcs().send_text(MAV_SEVERITY_INFO, "alt_4: %.2f", (float)saved_altitude_last_wp);
+
+//			gcs().send_text(MAV_SEVERITY_INFO, "dis_1: %.2f", (float)dist_to_target_point);
+//			gcs().send_text(MAV_SEVERITY_INFO, "dis_2: %.2f", (float)dist_to_current_wp);
+//			gcs().send_text(MAV_SEVERITY_INFO, "dis_3: %.2f", (float)dist_to_target_point2);
+
+//		}
+//		float yat = atanf(gps.velocity().z/gps.ground_speed())*180/3.1415926;
+//		pitch_angle_dive = pitch_angle_dive - yat;
+		if(counter < 4) {
+			counter++;
+		}
+//		float gain_factor = 1.0f + (50.0f / MAX(dist_to_current_wp, 1.0f)); // Увеличиваем усиление на ближних расстояниях
+//		pitch_angle_dive *= gain_factor;
+
 
 		return pitchController.get_servo_out(pitch_angle_dive * (-100.0f) - ahrs.pitch_sensor, speed_scaler, true,
 									 ground_mode && !(plane.flight_option_enabled(FlightOptions::DISABLE_GROUND_PID_SUPPRESSION)));
 
     }
-
 
 
 #if HAL_QUADPLANE_ENABLED

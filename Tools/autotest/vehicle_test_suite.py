@@ -1715,8 +1715,8 @@ class FRSkySPort(FRSky):
             if not self.connect():
                 self.progress("Failed to connect")
                 return
-        self.check_poll()
         self.do_sport_read()
+        self.check_poll()
 
     def do_sport_read(self):
         self.buffer += self.do_read()
@@ -2300,7 +2300,7 @@ class TestSuite(ABC):
     def reboot_check_valgrind_log(self):
         valgrind_log = util.valgrind_log_filepath(binary=self.binary,
                                                   model=self.frame)
-        if os.path.getsize(valgrind_log) > 0:
+        if os.path.isfile(valgrind_log) and (os.path.getsize(valgrind_log) > 0):
             backup_valgrind_log = ("%s-%s" % (str(int(time.time())), valgrind_log))
             shutil.move(valgrind_log, backup_valgrind_log)
 
@@ -2711,8 +2711,6 @@ class TestSuite(ABC):
             "SIM_MAG1_OFS_Z",
             "SIM_PARA_ENABLE",
             "SIM_PARA_PIN",
-            "SIM_PLD_ALT_LMT",
-            "SIM_PLD_DIST_LMT",
             "SIM_RICH_CTRL",
             "SIM_RICH_ENABLE",
             "SIM_SHIP_DSIZE",
@@ -2723,9 +2721,6 @@ class TestSuite(ABC):
             "SIM_SHIP_PSIZE",
             "SIM_SHIP_SPEED",
             "SIM_SHIP_SYSID",
-            "SIM_SONAR_POS_X",
-            "SIM_SONAR_POS_Y",
-            "SIM_SONAR_POS_Z",
             "SIM_TA_ENABLE",
             "SIM_VIB_FREQ_X",
             "SIM_VIB_FREQ_Y",
@@ -3320,7 +3315,7 @@ class TestSuite(ABC):
             os.link(self.logfile, self.buildlog)
         except OSError as error:
             self.progress("OSError [%d]: %s" % (error.errno, error.strerror))
-            self.progress("WARN: Failed to create link: %s => %s, "
+            self.progress("Problem: Failed to create link: %s => %s, "
                           "will copy tlog manually to target location" %
                           (self.logfile, self.buildlog))
             self.copy_tlog = True
@@ -3665,7 +3660,7 @@ class TestSuite(ABC):
         if (m.failure_flags & mavutil.mavlink.HL_FAILURE_FLAG_GPS) != 0:
             raise NotAchievedException("Expected GPS to be OK")
         self.assert_sensor_state(mavutil.mavlink.MAV_SYS_STATUS_SENSOR_GPS, True, True, True)
-        self.set_parameter("SIM_GPS_TYPE", 0)
+        self.set_parameter("SIM_GPS1_TYPE", 0)
         self.delay_sim_time(10)
         self.assert_sensor_state(mavutil.mavlink.MAV_SYS_STATUS_SENSOR_GPS, False, False, False)
         m = self.poll_message("HIGH_LATENCY2")
@@ -3674,7 +3669,7 @@ class TestSuite(ABC):
             raise NotAchievedException("Expected GPS to be failed")
 
         self.start_subtest("HIGH_LATENCY2 location")
-        self.set_parameter("SIM_GPS_TYPE", 1)
+        self.set_parameter("SIM_GPS1_TYPE", 1)
         self.delay_sim_time(10)
         m = self.poll_message("HIGH_LATENCY2")
         self.progress(self.dump_message_verbose(m))
@@ -4366,7 +4361,13 @@ class TestSuite(ABC):
 
     def message_has_field_values(self, m, fieldvalues, verbose=True, epsilon=None):
         for (fieldname, value) in fieldvalues.items():
-            got = getattr(m, fieldname)
+            if "[" in fieldname: # fieldname == "arrayname[index]"
+                assert fieldname[-1] == "]", fieldname
+                arrayname, index = fieldname.split("[", 1)
+                index = int(index[:-1])
+                got = getattr(m, arrayname)[index]
+            else:
+                got = getattr(m, fieldname)
 
             value_string = value
             got_string = got
@@ -5275,11 +5276,12 @@ class TestSuite(ABC):
                                                   ):
         '''returns a list of mission-item-ints from filepath'''
         # self.progress("filepath: %s" % filepath)
-        self.progress("Loading {loaderclass.itemstype()} (%s)" % os.path.basename(filepath))
         wploader = loaderclass(
             target_system=target_system,
             target_component=target_component
         )
+        itemstype = mavutil.mavlink.enums["MAV_MISSION_TYPE"][wploader.mav_mission_type()]
+        self.progress(f"Loading {itemstype} ({os.path.basename(filepath)}")
         wploader.load(filepath)
         return [self.wp_to_mission_item_int(x, wploader.mav_mission_type()) for x in wploader.wpoints]  # noqa:502
 
@@ -8471,7 +8473,7 @@ Also, ignores heartbeats not from our target system'''
 
     def wait_gps_disable(self, position_horizontal=True, position_vertical=False, timeout=30):
         """Disable GPS and wait for EKF to report the end of assistance from GPS."""
-        self.set_parameter("SIM_GPS_DISABLE", 1)
+        self.set_parameter("SIM_GPS1_ENABLE", 0)
         tstart = self.get_sim_time()
 
         """ if using SITL estimates directly """
@@ -8488,10 +8490,8 @@ Also, ignores heartbeats not from our target system'''
         self.progress("Waiting for EKF not having bits %u" % not_required_value)
         last_print_time = 0
         while timeout is None or self.get_sim_time_cached() < tstart + timeout:
-            m = self.mav.recv_match(type='EKF_STATUS_REPORT', blocking=True, timeout=timeout)
-            if m is None:
-                continue
-            current = m.flags
+            esr = self.assert_receive_message('EKF_STATUS_REPORT', timeout=timeout)
+            current = esr.flags
             if self.get_sim_time_cached() - last_print_time > 1:
                 self.progress("Wait EKF.flags: not required:%u current:%u" %
                               (not_required_value, current))
@@ -8499,6 +8499,7 @@ Also, ignores heartbeats not from our target system'''
             if current & not_required_value != not_required_value:
                 self.progress("GPS disable OK")
                 return
+        self.progress(f"Last EKF_STATUS_REPORT: {esr}")
         raise AutoTestTimeoutException("Failed to get EKF.flags=%u disabled" % not_required_value)
 
     def wait_text(self, *args, **kwargs):
@@ -9429,6 +9430,20 @@ Also, ignores heartbeats not from our target system'''
                                 target_lng,
                                 location.alt,
                                 location.heading)
+
+    def offset_location_heading_distance(self, location, bearing, distance):
+        (target_lat, target_lng) = mavextra.gps_newpos(
+            location.lat,
+            location.lng,
+            bearing,
+            distance
+        )
+        return mavutil.location(
+            target_lat,
+            target_lng,
+            location.alt,
+            location.heading
+        )
 
     def monitor_groundspeed(self, want, tolerance=0.5, timeout=5):
         tstart = self.get_sim_time()
@@ -10683,7 +10698,7 @@ Also, ignores heartbeats not from our target system'''
                     p1=1,  # ARM
                     want_result=mavutil.mavlink.MAV_RESULT_FAILED,
                 )
-                self.set_parameter("SIM_GPS_DISABLE", 0)
+                self.set_parameter("SIM_GPS1_ENABLE", 1)
                 self.wait_ekf_happy() # EKF may stay unhappy for a while
                 self.progress("PASS not able to arm without Position in mode : %s" % mode)
             if mode in self.get_no_position_not_settable_modes_list():
@@ -10693,10 +10708,10 @@ Also, ignores heartbeats not from our target system'''
                 try:
                     self.change_mode(mode, timeout=15)
                 except AutoTestTimeoutException:
-                    self.set_parameter("SIM_GPS_DISABLE", 0)
+                    self.set_parameter("SIM_GPS1_ENABLE", 1)
                     self.progress("PASS not able to set mode without Position : %s" % mode)
                 except ValueError:
-                    self.set_parameter("SIM_GPS_DISABLE", 0)
+                    self.set_parameter("SIM_GPS1_ENABLE", 1)
                     self.progress("PASS not able to set mode without Position : %s" % mode)
             if mode == "FOLLOW":
                 self.set_parameter("FOLL_ENABLE", 0)
@@ -12313,6 +12328,7 @@ switch value'''
         expected_count = 0
         seen_ids = {}
         self.progress("Downloading parameters")
+        debug = False
         while True:
             now = self.get_sim_time_cached()
             if not start_done or now - last_parameter_received > 10:
@@ -12323,6 +12339,7 @@ switch value'''
                 elif attempt_count != 0:
                     self.progress("Download failed; retrying")
                     self.delay_sim_time(1)
+                    debug = True
                 self.drain_mav()
                 self.mav.mav.param_request_list_send(target_system, target_component)
                 attempt_count += 1
@@ -12337,8 +12354,8 @@ switch value'''
             if m.param_index == 65535:
                 self.progress("volunteered parameter: %s" % str(m))
                 continue
-            if False:
-                self.progress("  received (%4u/%4u %s=%f" %
+            if debug:
+                self.progress("  received id=%4u param_count=%4u %s=%f" %
                               (m.param_index, m.param_count, m.param_id, m.param_value))
             if m.param_index >= m.param_count:
                 raise ValueError("parameter index (%u) gte parameter count (%u)" %
@@ -12531,7 +12548,7 @@ switch value'''
             self.context_collect("STATUSTEXT")
             self.set_parameters({
                 "AFS_MAX_GPS_LOSS": 1,
-                "SIM_GPS_DISABLE": 1,
+                "SIM_GPS1_ENABLE": 0,
             })
             self.wait_statustext("AFS State: GPS_LOSS", check_context=True)
             self.context_pop()
@@ -13718,8 +13735,11 @@ switch value'''
 
     def FRSkySPort(self):
         '''Test FrSky SPort mode'''
-        self.set_parameter("SERIAL5_PROTOCOL", 4) # serial5 is FRSky sport
-        self.set_parameter("RPM1_TYPE", 10) # enable SITL RPM sensor
+        self.set_parameters({
+            "SERIAL5_PROTOCOL": 4, # serial5 is FRSky sport
+            "RPM1_TYPE": 10, # enable SITL RPM sensor
+            "GPS1_TYPE": 100,  # use simulated backend for consistent position
+        })
         port = self.spare_network_port()
         self.customise_SITL_commandline([
             "--serial5=tcp:%u" % port # serial5 spews to localhost port
@@ -14160,7 +14180,7 @@ switch value'''
         self.context_collect("STATUSTEXT")
         for (sim_gps_type, name, gps_type, detect_name, serial_protocol, detect_prefix) in sim_gps:
             self.start_subtest("Checking GPS type %s" % name)
-            self.set_parameter("SIM_GPS_TYPE", sim_gps_type)
+            self.set_parameter("SIM_GPS1_TYPE", sim_gps_type)
             self.set_parameter("SERIAL3_PROTOCOL", serial_protocol)
             if gps_type is None:
                 gps_type = 1  # auto-detect
@@ -14265,7 +14285,7 @@ switch value'''
 
         self.start_subtest("Ensure detection when sim gps connected")
         self.set_parameter("SIM_GPS2_TYPE", 1)
-        self.set_parameter("SIM_GPS2_DISABLE", 0)
+        self.set_parameter("SIM_GPS2_ENABLE", 1)
         # a reboot is required after setting GPS2_TYPE.  We start
         # sending GPS2_RAW out, once the parameter is set, but a
         # reboot is required because _port[1] is only set in
@@ -14281,9 +14301,9 @@ switch value'''
             raise NotAchievedException("Incorrect fix type")
 
         self.start_subtest("Check parameters are per-GPS")
-        self.assert_parameter_value("SIM_GPS_NUMSATS", 10)
+        self.assert_parameter_value("SIM_GPS1_NUMSATS", 10)
         self.assert_gps_satellite_count("GPS_RAW_INT", 10)
-        self.set_parameter("SIM_GPS_NUMSATS", 13)
+        self.set_parameter("SIM_GPS1_NUMSATS", 13)
         self.assert_gps_satellite_count("GPS_RAW_INT", 13)
 
         self.assert_parameter_value("SIM_GPS2_NUMSATS", 10)
@@ -14311,7 +14331,7 @@ switch value'''
         if abs(gpi_alt - new_gpi_alt) > 100:
             raise NotAchievedException("alt moved unexpectedly")
         self.progress("Killing first GPS")
-        self.set_parameter("SIM_GPS_DISABLE", 1)
+        self.set_parameter("SIM_GPS1_ENABLE", 0)
         self.delay_sim_time(1)
         self.progress("Checking altitude now matches second GPS")
         m = self.assert_receive_message("GLOBAL_POSITION_INT")
